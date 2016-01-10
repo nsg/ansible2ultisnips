@@ -1,0 +1,90 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import sys, os, yaml
+from jinja2 import Template
+
+def ansible_strfix(s):
+    if s and s != "None":
+        return s
+    else:
+        return ""
+
+def make_snippets(yd):
+    t = Template(
+'''
+
+#
+# From file: {{ fromfile }}
+#
+
+snippet {{ trigger }} "{{ short_description }}" b
+{{ module }}:
+{%- for k,v in options.iteritems() %}
+  {{ k }}: {{ v.default }}
+{%- endfor %}
+endsnippet
+
+snippet {{ trigger }}-kv "{{ short_description }}" b
+{{ module }}:{% for k,v in options.iteritems() %} {{ k }}={{ v.default }}{% endfor %}
+endsnippet
+
+snippet {{ trigger }}-doc "{{ short_description }}" b
+# {{ description }}
+{{ module }}:
+{%- for k,v in options.iteritems() %}
+  # {{ v.description }}
+  # required: {{ v.required }}
+  # aliases: {{ v.aliases }}
+  # choices: {{ v.choices }}
+  {{ k }}: {{ v.default }}
+{%- endfor %}
+endsnippet
+''')
+
+    return t.render(
+        trigger=yd['module'],
+        short_description=yd.get('short_description',''),
+        description=yd.get('description',[]),
+        module=yd['module'],
+        options=yd.get('options', {}),
+        fromfile=sys.argv[1]
+        )
+
+# Hacky ugly parser :)
+out = []
+with open(sys.argv[1], 'r') as f:
+    save_docs = False
+    for line in f:
+        if save_docs and not ( "'''" in line or '"""' in line):
+            # Fix lines with: C(my \\"code\\" style)
+            line = line.replace('\\"','\"')
+            out.append(line)
+
+        if save_docs and ( "'''" in line or '"""' in line):
+            break
+        if "DOCUMENTATION" in line and ("'''" in line or '"""' in line):
+            save_docs = True
+
+
+try:
+    yd = yaml.load("".join(out).decode('utf-8'))
+except:
+    print "DOCUMENTATION FAILED in {}".format(sys.argv[1])
+    print "Failed to parse YAML:"
+    print "".join(out)
+    print "Unexpected error:", sys.exc_info()[0]
+    sys.exit(1)
+
+try:
+    sn = make_snippets(yd)
+except:
+    print "DOCUMENTATION FAILED in {}".format(sys.argv[1])
+    print "Snippet generation failed:"
+    print yd
+    print "Unexpected error:", sys.exc_info()[0]
+    sys.exit(1)
+
+fd = open("ansible.snippet", "a")
+fd.write(sn)
+fd.close()
